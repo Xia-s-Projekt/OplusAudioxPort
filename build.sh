@@ -44,6 +44,7 @@ echo "[BUILD] 4/4 liboplus_audiox_aidl_shim.so"
 AUDIOX_LINK_FLAGS=()
 if [[ -z "$LINK_AUDIOX_LIB" ]]; then
     for cand in \
+        "$SCRIPT_DIR/prebuilt/lib64/soundfx/libOplusAudioxAidl.so" \
         "$SCRIPT_DIR/libs/libOplusAudioxAidl.so" \
         "/mnt/project/RomTools/tool/tmp/oplus/mybin/lib64/soundfx/libOplusAudioxAidl.so" \
         "/mnt/project/RomTools/ROM_WORKDIR/cos16/erofs/vendor/lib64/soundfx/libOplusAudioxAidl.so"; do

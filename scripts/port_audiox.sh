@@ -63,21 +63,30 @@ if [[ "$FORCE_HAL" != "auto" && "$FORCE_HAL" != "aidl" && "$FORCE_HAL" != "hidl3
     exit 1
 fi
 
-# Resolve vendor dir & config dir
-if [[ -d "$TARGET/vendor" ]]; then
-    VENDOR_DIR="$(cd "$TARGET/vendor" && pwd)"
-    [[ -z "$CONFIG_DIR" && -d "$TARGET/config" ]] && CONFIG_DIR="$(cd "$TARGET/config" && pwd)"
-elif [[ -d "$TARGET/etc" && -d "$TARGET/lib64" ]]; then
+# Resolve partition dir (vendor or odm) & config dir
+PART_NAME="vendor"
+if [[ -d "$TARGET/etc" && ( -d "$TARGET/lib64" || -d "$TARGET/lib" || -d "$TARGET/bin" || -f "$TARGET/build.prop" || -f "$TARGET/etc/build.prop" ) ]]; then
     VENDOR_DIR="$(cd "$TARGET" && pwd)"
+    [[ "$(basename "$VENDOR_DIR")" == "odm" ]] && PART_NAME="odm" || PART_NAME="vendor"
     [[ -z "$CONFIG_DIR" && -d "$VENDOR_DIR/../config" ]] && CONFIG_DIR="$(cd "$VENDOR_DIR/../config" && pwd)"
+elif [[ -d "$TARGET/vendor" ]]; then
+    VENDOR_DIR="$(cd "$TARGET/vendor" && pwd)"
+    PART_NAME="vendor"
+    [[ -z "$CONFIG_DIR" && -d "$TARGET/config" ]] && CONFIG_DIR="$(cd "$TARGET/config" && pwd)"
+elif [[ -d "$TARGET/odm" ]]; then
+    VENDOR_DIR="$(cd "$TARGET/odm" && pwd)"
+    PART_NAME="odm"
+    [[ -z "$CONFIG_DIR" && -d "$TARGET/config" ]] && CONFIG_DIR="$(cd "$TARGET/config" && pwd)"
 else
-    echo "[ERR] Target does not look like an unpacked erofs/ or vendor/ directory: $TARGET" >&2
+    echo "[ERR] Target does not look like an unpacked erofs/, vendor/, or odm/ directory: $TARGET" >&2
     exit 1
 fi
 
 # Auto-locate assets dir if omitted
 if [[ -z "$ASSETS_DIR" ]]; then
     for cand in \
+        "$SCRIPT_DIR/../prebuilt" \
+        "$SCRIPT_DIR/prebuilt" \
         "$SCRIPT_DIR" \
         "$SCRIPT_DIR/.." \
         "/mnt/project/RomTools/tool/tmp/oplus/mybin"; do
@@ -105,7 +114,7 @@ fi
 echo "================================================================"
 echo " OPlus AudioX + Spatializer Dynamic Porting Engine"
 echo "----------------------------------------------------------------"
-echo " Vendor Dir  : $VENDOR_DIR"
+echo " Target Dir  : $VENDOR_DIR ($PART_NAME)"
 echo " Config Dir  : ${CONFIG_DIR:-<none>}"
 echo " Assets Dir  : $ASSETS_DIR"
 echo " Source ODM  : ${SOURCE_ODM:-<none>}"
@@ -114,7 +123,7 @@ echo " HAL Mode    : $FORCE_HAL"
 echo " Strip Dolby : $STRIP_DOLBY"
 echo "================================================================"
 
-python3 - "$VENDOR_DIR" "${CONFIG_DIR:-}" "$ASSETS_DIR" "${SOURCE_ODM:-}" \
+python3 - "$VENDOR_DIR" "$PART_NAME" "${CONFIG_DIR:-}" "$ASSETS_DIR" "${SOURCE_ODM:-}" \
           "$SCRIPT_DIR" "$AIDL_MODE" "$FORCE_HAL" "$STRIP_DOLBY" "$SET_LEVELER_PROP" "$DRY_RUN" <<'PY'
 import hashlib
 import os
@@ -130,6 +139,7 @@ from pathlib import Path
 
 (
     vendor_arg,
+    part_name,
     config_arg,
     assets_arg,
     source_odm_arg,
@@ -139,9 +149,10 @@ from pathlib import Path
     strip_dolby_s,
     set_leveler_prop_s,
     dry_run_s,
-) = sys.argv[1:11]
+) = sys.argv[1:12]
 
 VENDOR_DIR = Path(vendor_arg)
+PART_NAME = part_name
 CONFIG_DIR = Path(config_arg) if config_arg else None
 ASSETS_DIR = Path(assets_arg)
 SOURCE_ODM = Path(source_odm_arg) if source_odm_arg else None
@@ -302,20 +313,28 @@ def parse_elf_info(path: Path):
 
 
 def detect_audio_effect_hal():
-    """Dynamically detect AIDL vs HIDL (32-bit or 64-bit) IEffectsFactory in target vendor."""
+    """Dynamically detect AIDL vs HIDL (32-bit or 64-bit) IEffectsFactory in target partition."""
     aidl_manifests = []
     hidl_manifests = []
 
+    scan_roots = [VENDOR_DIR]
+    # When targeting /odm directly, also inspect sibling /vendor for VINTF & audio HAL service detection
+    sibling_vendor = VENDOR_DIR.parent / "vendor"
+    if PART_NAME == "odm" and sibling_vendor.is_dir():
+        scan_roots.append(sibling_vendor)
+
     vintf_files = []
-    for base in [VENDOR_DIR / "etc" / "vintf", VENDOR_DIR / "odm" / "etc" / "vintf"]:
-        if (base / "manifest.xml").is_file():
-            vintf_files.append(base / "manifest.xml")
-        mdir = base / "manifest"
-        if mdir.is_dir():
-            vintf_files.extend(sorted(mdir.glob("*.xml")))
+    for root in scan_roots:
+        for base in [root / "etc" / "vintf", root / "odm" / "etc" / "vintf"]:
+            if (base / "manifest.xml").is_file():
+                vintf_files.append((root, base / "manifest.xml"))
+            mdir = base / "manifest"
+            if mdir.is_dir():
+                for mf in sorted(mdir.glob("*.xml")):
+                    vintf_files.append((root, mf))
 
     hal_block_re = re.compile(r'<hal\b([^>]*)>(.*?)</hal>', re.DOTALL)
-    for vf in vintf_files:
+    for root, vf in vintf_files:
         text = vf.read_text(encoding="utf-8", errors="ignore")
         for attrs, body in hal_block_re.findall(text):
             if "<name>android.hardware.audio.effect</name>" not in body:
@@ -323,15 +342,17 @@ def detect_audio_effect_hal():
             fmt_m = re.search(r'format\s*=\s*"([^"]+)"', attrs)
             fmt = fmt_m.group(1).lower() if fmt_m else ""
             if fmt == "aidl" or "IFactory" in body:
-                aidl_manifests.append(str(vf.relative_to(VENDOR_DIR)))
+                aidl_manifests.append(str(vf.relative_to(root)))
             elif fmt == "hidl" or "IEffectsFactory" in body:
-                hidl_manifests.append(str(vf.relative_to(VENDOR_DIR)))
+                hidl_manifests.append(str(vf.relative_to(root)))
 
     aidl_bins = []
     hidl32_bins = []
     hidl64_bins = []
-    bin_hw = VENDOR_DIR / "bin" / "hw"
-    if bin_hw.is_dir():
+    for root in scan_roots:
+        bin_hw = root / "bin" / "hw"
+        if not bin_hw.is_dir():
+            continue
         for b in sorted(bin_hw.iterdir()):
             if not b.is_file() or b.is_symlink():
                 continue
@@ -351,8 +372,8 @@ def detect_audio_effect_hal():
                 else:
                     hidl64_bins.append(b)
 
-    has_aidl_xml = (VENDOR_DIR / "etc" / "audio_effects_config.xml").is_file()
-    has_hidl_xml = (VENDOR_DIR / "etc" / "audio_effects.xml").is_file()
+    has_aidl_xml = any((r / "etc" / "audio_effects_config.xml").is_file() for r in scan_roots)
+    has_hidl_xml = any((r / "etc" / "audio_effects.xml").is_file() for r in scan_roots)
 
     if force_hal != "auto":
         mode = force_hal
@@ -371,7 +392,7 @@ def detect_audio_effect_hal():
         "mode": mode,
         "aidl_manifests": aidl_manifests,
         "hidl_manifests": hidl_manifests,
-        "aidl_bins": [str(b.relative_to(VENDOR_DIR)) for b, _ in aidl_bins],
+        "aidl_bins": [b.name for b, _ in aidl_bins],
         "hidl32_bins": hidl32_bins,
         "hidl64_bins": hidl64_bins,
         "has_aidl_xml": has_aidl_xml,
@@ -721,7 +742,6 @@ def deploy_params_and_symlinks(tracked):
     ensure_dir_tracked("etc/audio", tracked)
     ensure_dir_tracked("etc/audio/audiox_param", tracked)
     ensure_dir_tracked("etc/spatializer", tracked)
-    ensure_dir_tracked("odm/etc/audio", tracked)
 
     ax_count = 0
     for f in sorted(audiox_src.glob("*.bin")):
@@ -733,9 +753,13 @@ def deploy_params_and_symlinks(tracked):
         copy_file(f, VENDOR_DIR / "etc" / "spatializer" / f.name, 0o644, tracked, "vendor_configs_file", 0, "0644")
         sp_count += 1
 
-    ensure_symlink_tracked("odm/etc/audio/audiox_param", "/vendor/etc/audio/audiox_param", tracked)
-    ensure_symlink_tracked("odm/etc/spatializer", "/vendor/etc/spatializer", tracked)
-    print(f"  [OK] Staged {ax_count} audiox_param .bin files, {sp_count} spatializer .bin files, and 2 /odm symlinks.")
+    if PART_NAME == "odm":
+        print(f"  [OK] Staged {ax_count} audiox_param .bin files and {sp_count} spatializer .bin files directly in /odm/etc.")
+    else:
+        ensure_dir_tracked("odm/etc/audio", tracked)
+        ensure_symlink_tracked("odm/etc/audio/audiox_param", "/vendor/etc/audio/audiox_param", tracked)
+        ensure_symlink_tracked("odm/etc/spatializer", "/vendor/etc/spatializer", tracked)
+        print(f"  [OK] Staged {ax_count} audiox_param .bin files, {sp_count} spatializer .bin files, and 2 /odm symlinks.")
 
 
 def strip_dolby_from_vendor():
@@ -934,9 +958,10 @@ def patch_audio_policy_configs():
 def patch_build_prop():
     if not SET_LEVELER_PROP:
         return
-    bprop = VENDOR_DIR / "build.prop"
-    if not bprop.is_file():
-        print("  [WARN] vendor/build.prop not found; skipping prop injection.")
+    bprop_candidates = [VENDOR_DIR / "etc" / "build.prop", VENDOR_DIR / "build.prop"] if PART_NAME == "odm" else [VENDOR_DIR / "build.prop"]
+    bprop = next((p for p in bprop_candidates if p.is_file()), None)
+    if not bprop:
+        print(f"  [WARN] {PART_NAME} build.prop not found; skipping prop injection.")
         return
     orig = bprop.read_text(encoding="utf-8", errors="ignore")
     key = "persist.sys.rianixia.audiox_leveler"
@@ -951,26 +976,26 @@ def patch_build_prop():
     if content != orig:
         if not DRY_RUN:
             bprop.write_text(content, encoding="utf-8")
-        print(f"  [OK] Updated vendor/build.prop ({line_val})")
+        print(f"  [OK] Updated {PART_NAME}/{bprop.relative_to(VENDOR_DIR)} ({line_val})")
     else:
-        print(f"  [INFO] vendor/build.prop already has {line_val}")
+        print(f"  [INFO] {PART_NAME}/{bprop.relative_to(VENDOR_DIR)} already has {line_val}")
 
 
 def update_erofs_configs(tracked):
     if not CONFIG_DIR or not CONFIG_DIR.is_dir():
-        print("\n[STEP 7] No erofs/config directory provided; skipping vendor_file_contexts & vendor_fs_config.")
+        print(f"\n[STEP 7] No erofs/config directory provided; skipping {PART_NAME}_file_contexts & {PART_NAME}_fs_config.")
         return
 
-    print(f"\n[STEP 7] Updating {CONFIG_DIR}/vendor_file_contexts & vendor_fs_config...")
-    fc_path = CONFIG_DIR / "vendor_file_contexts"
-    fs_path = CONFIG_DIR / "vendor_fs_config"
+    print(f"\n[STEP 7] Updating {CONFIG_DIR}/{PART_NAME}_file_contexts & {PART_NAME}_fs_config...")
+    fc_path = CONFIG_DIR / f"{PART_NAME}_file_contexts"
+    fs_path = CONFIG_DIR / f"{PART_NAME}_fs_config"
 
     def escape_fc(rel_path: str) -> str:
-        # Match Android/RomTools vendor_file_contexts escaping (. and +)
+        # Match Android/RomTools file_contexts escaping (. and +)
         esc = rel_path.replace(".", r"\.").replace("+", r"\+")
-        return f"/vendor/{esc}"
+        return f"/{PART_NAME}/{esc}"
 
-    # 1. vendor_file_contexts
+    # 1. <part>_file_contexts
     if fc_path.is_file():
         lines = fc_path.read_text(encoding="utf-8", errors="ignore").splitlines()
         existing_keys = {}
@@ -998,9 +1023,9 @@ def update_erofs_configs(tracked):
 
         if not DRY_RUN and (added or updated):
             fc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"  [OK] vendor_file_contexts: +{added} added, ~{updated} updated")
+        print(f"  [OK] {PART_NAME}_file_contexts: +{added} added, ~{updated} updated")
 
-    # 2. vendor_fs_config
+    # 2. <part>_fs_config
     if fs_path.is_file():
         lines = fs_path.read_text(encoding="utf-8", errors="ignore").splitlines()
         existing_keys = {}
@@ -1014,7 +1039,7 @@ def update_erofs_configs(tracked):
 
         added = updated = 0
         for rel, meta in tracked.items():
-            fs_key = f"vendor/{rel}"
+            fs_key = f"{PART_NAME}/{rel}"
             fs_line = f"{fs_key} {meta['uid']} {meta['gid']} {meta['mode']}"
             if fs_key in existing_keys:
                 idx = existing_keys[fs_key]
@@ -1028,7 +1053,7 @@ def update_erofs_configs(tracked):
 
         if not DRY_RUN and (added or updated):
             fs_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"  [OK] vendor_fs_config:     +{added} added, ~{updated} updated")
+        print(f"  [OK] {PART_NAME}_fs_config:     +{added} added, ~{updated} updated")
 
 
 def main():

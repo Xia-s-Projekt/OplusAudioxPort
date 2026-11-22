@@ -1,0 +1,8 @@
+service vendor.audio-effect-hal-64 /vendor/bin/hw/android.hardware.audio.effect.service.oplus64
+    class hal
+    user audioserver
+    group audio camera drmrpc inet media mediadrm net_bt net_bt_admin net_bw_acct wakelock context_hub system sdcard_rw
+    capabilities BLOCK_SUSPEND SYS_NICE
+    ioprio rt 4
+    task_profiles ProcessCapacityHigh HighPerformance
+    onrestart restart audioserver
