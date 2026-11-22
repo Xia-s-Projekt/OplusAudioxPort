@@ -103,11 +103,7 @@ if [[ -z "$ASSETS_DIR" || ! -d "$ASSETS_DIR" ]]; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERR] python3 is required" >&2
-    exit 1
-fi
-if ! command -v patchelf >/dev/null 2>&1; then
-    echo "[ERR] patchelf is required (pacman -S patchelf)" >&2
+    echo "[ERR] python3 is required (Termux: 'pkg install python', Arch: 'pacman -S python', Debian/Ubuntu: 'apt install python3')" >&2
     exit 1
 fi
 
@@ -485,6 +481,15 @@ def ensure_symlink_tracked(rel_link: str, link_target: str, tracked: dict):
     os.symlink(link_target, dst)
 
 
+def run_patchelf(args):
+    if not shutil.which("patchelf"):
+        raise RuntimeError(
+            "patchelf is required to patch unpatched libc++_shared.so SONAME/DT_NEEDED "
+            "(install patchelf or use pre-isolated prebuilt assets)"
+        )
+    subprocess.run(["patchelf"] + args, check=True)
+
+
 def resolve_and_deploy_elfs(hal_info, search_dirs, tracked):
     mode = hal_info["mode"]
     print(f"\n[STEP 2] Deploying core binaries & auto-resolving ELF DT_NEEDED dependencies ({mode})...")
@@ -550,10 +555,10 @@ def resolve_and_deploy_elfs(hal_info, search_dirs, tracked):
         if not DRY_RUN:
             el = parse_elf_info(dst)
             if not el or el.get("soname") != "libc++_shared_oplus.so":
-                subprocess.run(["patchelf", "--set-soname", "libc++_shared_oplus.so", str(dst)], check=True)
+                run_patchelf(["--set-soname", "libc++_shared_oplus.so", str(dst)])
         isolated_libcxx_deployed = True
         queue.append((dst, donor))
-        print(f"  [DEPS] Isolated C++ runtime: {donor.name} -> vendor/lib64/libc++_shared_oplus.so (SONAME patched)")
+        print(f"  [DEPS] Isolated C++ runtime: {donor.name} -> {PART_NAME}/lib64/libc++_shared_oplus.so")
         return dst
 
     while queue:
@@ -586,10 +591,7 @@ def resolve_and_deploy_elfs(hal_info, search_dirs, tracked):
                 if need_isolation:
                     ensure_isolated_libcxx()
                     if needed == "libc++_shared.so" and not DRY_RUN:
-                        subprocess.run(
-                            ["patchelf", "--replace-needed", "libc++_shared.so", "libc++_shared_oplus.so", str(dst_path)],
-                            check=True,
-                        )
+                        run_patchelf(["--replace-needed", "libc++_shared.so", "libc++_shared_oplus.so", str(dst_path)])
                     dep_summary.append("libc++_shared_oplus.so(isolated)")
                     continue
                 elif vendor_cxx.is_file():

@@ -4,11 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR="$(pwd)"
 
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "[ERR] python3 is required (Termux: 'pkg install python', Arch: 'pacman -S python', Debian/Ubuntu: 'apt install python3')" >&2
+    exit 1
+fi
+
 # Locate port_audiox.sh and prebuilt assets
 PORT_SCRIPT=""
 ASSETS_DIR=""
 for cand in "$SCRIPT_DIR/scripts/port_audiox.sh" "$SCRIPT_DIR/port_audiox.sh" "/mnt/project/RomTools/tool/tmp/oplus/mybin/port_audiox.sh"; do
-    if [[ -x "$cand" ]]; then
+    if [[ -f "$cand" ]]; then
         PORT_SCRIPT="$cand"
         break
     fi
@@ -36,24 +41,22 @@ is_partition_root() {
     [[ -d "$d/etc" ]] && [[ -d "$d/lib64" || -d "$d/lib" || -d "$d/bin" || -f "$d/build.prop" || -f "$d/etc/build.prop" ]]
 }
 
+CANDIDATES=()
 scan_for_targets() {
     local base="$1"
-    local -n out_arr=$2
-    out_arr=()
+    CANDIDATES=()
 
     [[ -d "$base" ]] || return 0
     local abs_base
     abs_base="$(cd "$base" && pwd)"
 
-    # If the given directory itself is already a vendor or odm root
     local bname
     bname="$(basename "$abs_base")"
     if [[ "$bname" == "vendor" || "$bname" == "odm" ]] && is_partition_root "$abs_base"; then
-        out_arr+=("$abs_base")
+        CANDIDATES+=("$abs_base")
         return 0
     fi
 
-    # Check common direct & RomTools layouts first (vendor preferred over odm)
     local cand
     for cand in \
         "$abs_base/vendor" \
@@ -61,19 +64,42 @@ scan_for_targets() {
         "$abs_base/odm" \
         "$abs_base/erofs/odm"; do
         if is_partition_root "$cand"; then
-            out_arr+=("$(cd "$cand" && pwd)")
+            CANDIDATES+=("$(cd "$cand" && pwd)")
         fi
     done
 
-    # Fallback shallow scan (depth <= 3) if nothing found in direct layouts
-    if [[ ${#out_arr[@]} -eq 0 ]]; then
+    # Portable shallow scan (depth <= 3) via python3 so Android/Termux/Linux need no extra tools
+    if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
         local found_dir
-        while IFS= read -r -d '' found_dir; do
-            local clean="${found_dir%/}"
-            if is_partition_root "$clean"; then
-                out_arr+=("$(cd "$clean" && pwd)")
-            fi
-        done < <(fd -t d -d 3 '^(vendor|odm)$' "$abs_base" -0 2>/dev/null | sort -z)
+        while IFS= read -r found_dir; do
+            [[ -n "$found_dir" ]] && CANDIDATES+=("$found_dir")
+        done < <(python3 - "$abs_base" <<'PY'
+import os, sys
+base = os.path.abspath(sys.argv[1])
+base_depth = base.rstrip(os.sep).count(os.sep)
+found = []
+for root, dirs, _files in os.walk(base):
+    depth = root.rstrip(os.sep).count(os.sep) - base_depth
+    if depth >= 3:
+        dirs[:] = []
+        continue
+    dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+    for d in list(dirs):
+        if d in ("vendor", "odm"):
+            p = os.path.join(root, d)
+            if os.path.isdir(os.path.join(p, "etc")) and any([
+                os.path.isdir(os.path.join(p, "lib64")),
+                os.path.isdir(os.path.join(p, "lib")),
+                os.path.isdir(os.path.join(p, "bin")),
+                os.path.isfile(os.path.join(p, "build.prop")),
+                os.path.isfile(os.path.join(p, "etc", "build.prop")),
+            ]):
+                found.append(os.path.realpath(p))
+                dirs.remove(d)
+for p in sorted(set(found)):
+    print(p)
+PY
+        )
     fi
 }
 
@@ -86,11 +112,14 @@ while [[ $# -gt 0 ]]; do
             cat <<'EOF'
 Usage: ./install.sh [target_folder] [port_audiox.sh options...]
 
+Works on Linux and Android (Termux / shell with python3 + bash).
+
 Behavior:
   1. If run in a workdir containing ./vendor, ./erofs/vendor, ./odm, or ./erofs/odm,
      automatically detects and patches the partition (preferring vendor when present).
   2. If no vendor/ or odm/ partition is found, prompts interactively for a folder to scan.
-  3. Any extra flags (--aidl-mode direct|shim, --strip-dolby, --dry-run, etc.) are
+  3. Dynamically detects AIDL (IFactory) vs HIDL (32-bit/64-bit IEffectsFactory).
+  4. Any extra flags (--aidl-mode direct|shim, --strip-dolby, --dry-run, etc.) are
      forwarded directly to scripts/port_audiox.sh.
 EOF
             exit 0
@@ -114,16 +143,14 @@ EOF
     esac
 done
 
-CANDIDATES=()
 if [[ -n "$EXPLICIT_TARGET" ]]; then
     if [[ ! -d "$EXPLICIT_TARGET" ]]; then
         echo "[ERR] Directory does not exist: $EXPLICIT_TARGET" >&2
         exit 1
     fi
-    scan_for_targets "$EXPLICIT_TARGET" CANDIDATES
+    scan_for_targets "$EXPLICIT_TARGET"
 else
-    # Scan current working directory where install.sh was invoked
-    scan_for_targets "$WORK_DIR" CANDIDATES
+    scan_for_targets "$WORK_DIR"
 fi
 
 # Interactive prompt when no vendor/ or odm/ directory was auto-detected
@@ -137,24 +164,21 @@ while [[ ${#CANDIDATES[@]} -eq 0 ]]; do
     if [[ "$scan_path" == "q" || "$scan_path" == "Q" ]]; then
         exit 0
     fi
-    # Expand leading ~
     scan_path="${scan_path/#\~/$HOME}"
     if [[ ! -d "$scan_path" ]]; then
         echo "[WARN] Folder does not exist: $scan_path"
         continue
     fi
-    scan_for_targets "$scan_path" CANDIDATES
+    scan_for_targets "$scan_path"
     if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
         echo "[WARN] No vendor/ or odm/ partition root found under: $scan_path"
     fi
 done
 
-# Pick target: auto-pick if single match or if vendor is present in a standard vendor+odm pair
 SELECTED=""
 if [[ ${#CANDIDATES[@]} -eq 1 ]]; then
     SELECTED="${CANDIDATES[0]}"
 else
-    # Prefer vendor over odm automatically if both are in the same parent dir
     for c in "${CANDIDATES[@]}"; do
         if [[ "$(basename "$c")" == "vendor" ]]; then
             SELECTED="$c"
@@ -180,4 +204,4 @@ fi
 
 echo "[EXEC] Target partition : $SELECTED"
 echo "[EXEC] Prebuilt assets  : $ASSETS_DIR"
-exec "$PORT_SCRIPT" --target "$SELECTED" --assets "$ASSETS_DIR" "${EXTRA_ARGS[@]}"
+exec bash "$PORT_SCRIPT" --target "$SELECTED" --assets "$ASSETS_DIR" "${EXTRA_ARGS[@]}"

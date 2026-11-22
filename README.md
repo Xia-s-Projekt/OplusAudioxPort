@@ -3,14 +3,16 @@
 Standalone source tree, prebuilt OPPO Find X9 AudioX/Spatializer payloads, NDK build system, and dynamic porting installer for **OPlus AudioX (OReality)** and **OPlus Spatializer** across both **HIDL** (`IEffectsFactory`) and **AIDL** (`IFactory`) Android vendor/odm partitions.
 
 > **Attribution & Proprietary Blobs Notice:**
-> The prebuilt OPlus AudioX / Spatializer libraries (`libOplusAudioxAidl.so`, `libOplusSpatializerAidl.so`, `liboplus_audiox.so`), runtime dependencies (`libMNN.so`, `libc++_shared.so`), and all 69 acoustic tuning `.bin` files (`etc/audio/audiox_param/`, `etc/spatializer/`) shipped in `prebuilt/` are extracted from the **OPPO Find X9**. See [Copyright, Licenses & Attribution](#copyright-licenses--attribution) and [NOTICE.md](NOTICE.md).
+> The prebuilt OPlus AudioX / Spatializer libraries (`libOplusAudioxAidl.so`, `libOplusSpatializerAidl.so`, `liboplus_audiox.so`), runtime dependencies (`libMNN.so`, `libc++_shared_oplus.so`), and all 69 acoustic tuning `.bin` files (`etc/audio/audiox_param/`, `etc/spatializer/`) shipped in `prebuilt/` are extracted from the **OPPO Find X9**. See [Copyright, Licenses & Attribution](#copyright-licenses--attribution) and [NOTICE.md](NOTICE.md).
 
 ---
 
-## Quickstart (`install.sh`)
+## Quickstart (`install.sh` — Linux & Android / Termux)
+
+Requirements: `bash` and `python3` only (`patchelf` is only needed if passing unpatched donor `--source-odm` binaries).
 
 ### 1. Drop-In Workdir Usage (Automatic Detection)
-Place this repository (or run `install.sh`) inside the same workdir as your unpacked `vendor/` (or `erofs/vendor/`, or `odm/`):
+Extract the release zip (or clone this repository) into the same workdir as your unpacked `vendor/` (or `erofs/vendor/`, or `odm/`):
 
 ```bash
 cd /path/to/your/rom_workdir
@@ -149,7 +151,7 @@ BUILD_TESTS=1 NDK_DIR=/home/ryanistr/android-ndk-r27c ./build.sh
 - **OPPO / OPlus Proprietary Binaries & Tuning Parameters (OPPO Find X9):**
   All prebuilt OPlus AudioX / Spatializer binaries (`prebuilt/lib64/liboplus_audiox.so`, `prebuilt/lib64/soundfx/libOplusAudioxAidl.so`, `prebuilt/lib64/soundfx/libOplusSpatializerAidl.so`) and tuning parameter files (`prebuilt/etc/audio/audiox_param/*.bin`, `prebuilt/etc/spatializer/*.bin`) are **extracted from the OPPO Find X9** and are **Copyright © Guangdong OPPO Mobile Telecommunications Corp., Ltd. (OPPO / OPlus)**. All rights remain with OPPO / OPlus; included strictly for interoperability and custom-ROM porting research.
 - **Alibaba MNN (`prebuilt/lib64/libMNN.so`):** Copyright © Alibaba Group Holding Limited — Apache License 2.0.
-- **LLVM `libc++_shared` (`prebuilt/lib64/libc++_shared.so`):** Copyright © LLVM Project — Apache-2.0 with LLVM Exception.
+- **LLVM `libc++_shared` (`prebuilt/lib64/libc++_shared_oplus.so`):** Copyright © LLVM Project — Apache-2.0 with LLVM Exception.
 - **AOSP (`libs/libhidlbase.so` link stub):** Copyright © The Android Open Source Project — Apache License 2.0.
 - **Original Shims & Scripts (`src/*`, `scripts/*`, `install.sh`, `build.sh`, `tests/*`):** MIT License.
 

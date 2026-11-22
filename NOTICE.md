@@ -24,8 +24,8 @@ These files remain the proprietary intellectual property of **OPPO / OPlus**. Th
 - Copyright © Alibaba Group Holding Limited.
 - Licensed under the **Apache License, Version 2.0** (https://www.apache.org/licenses/LICENSE-2.0).
 
-### LLVM `libc++_shared` (`prebuilt/lib64/libc++_shared.so`)
-- Extracted from OPPO Find X9 firmware as the C++ runtime required by `libOplusAudioxAidl.so` and `libOplusSpatializerAidl.so`.
+### LLVM `libc++_shared` (`prebuilt/lib64/libc++_shared_oplus.so`)
+- Extracted from OPPO Find X9 firmware (`libc++_shared.so`, SONAME isolated to `libc++_shared_oplus.so` to avoid clobbering vendor C++ runtimes) as the C++ runtime required by `libOplusAudioxAidl.so` and `libOplusSpatializerAidl.so`.
 - Copyright © LLVM Project contributors.
 - Licensed under the **Apache License, Version 2.0 with LLVM Exceptions** (https://llvm.org/LICENSE.txt).
 
