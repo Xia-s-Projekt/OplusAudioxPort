@@ -46,7 +46,7 @@ if [[ -z "$LINK_AUDIOX_LIB" ]]; then
     for cand in \
         "$SCRIPT_DIR/prebuilt/lib64/soundfx/libOplusAudioxAidl.so" \
         "$SCRIPT_DIR/libs/libOplusAudioxAidl.so" \
-        "/mnt/project/RomTools/tool/tmp/oplus/mybin/lib64/soundfx/libOplusAudioxAidl.so" \
+        "/mnt/project/RomTools/tool/tmp/oplus/myvendor/lib64/soundfx/libOplusAudioxAidl.so" \
         "/mnt/project/RomTools/ROM_WORKDIR/cos16/erofs/vendor/lib64/soundfx/libOplusAudioxAidl.so"; do
         if [[ -f "$cand" ]]; then
             LINK_AUDIOX_LIB="$cand"

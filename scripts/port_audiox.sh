@@ -87,9 +87,10 @@ if [[ -z "$ASSETS_DIR" ]]; then
     for cand in \
         "$SCRIPT_DIR/../prebuilt" \
         "$SCRIPT_DIR/prebuilt" \
+        "$SCRIPT_DIR/myvendor" \
         "$SCRIPT_DIR" \
         "$SCRIPT_DIR/.." \
-        "/mnt/project/RomTools/tool/tmp/oplus/mybin"; do
+        "/mnt/project/RomTools/tool/tmp/oplus/myvendor"; do
         if [[ -d "$cand/lib64/soundfx" || -d "$cand/out" ]]; then
             ASSETS_DIR="$(cd "$cand" && pwd)"
             break
@@ -1084,9 +1085,34 @@ def main():
     effective_aidl_lib = resolve_and_deploy_elfs(hal_info, search_dirs, tracked)
 
     if hal_info["mode"] == "hidl32":
+        # Remove unused AIDL shim if pre-copied from a common myvendor overlay
+        for unused in ["lib64/soundfx/liboplus_audiox_aidl_shim.so"]:
+            p = VENDOR_DIR / unused
+            if p.is_file() or p.is_symlink():
+                if not DRY_RUN:
+                    p.unlink()
         patch_hidl32_service(hal_info, search_dirs, tracked)
     else:
         print("\n[STEP 3] Skipping 64-bit HIDL service deployment (vendor provides native AIDL/64-bit HAL).")
+        unused_files = [
+            "bin/hw/android.hardware.audio.effect.service.oplus64",
+            "etc/init/android.hardware.audio.effect.service.oplus64.rc",
+        ]
+        if hal_info["mode"] == "aidl":
+            unused_files.extend([
+                "lib64/soundfx/liboplus_audiox_hidl.so",
+                "lib64/soundfx/liboplus_spatializer_hidl.so",
+            ])
+            if aidl_mode == "direct":
+                unused_files.append("lib64/soundfx/liboplus_audiox_aidl_shim.so")
+        else:
+            unused_files.append("lib64/soundfx/liboplus_audiox_aidl_shim.so")
+        for unused in unused_files:
+            p = VENDOR_DIR / unused
+            if p.is_file() or p.is_symlink():
+                if not DRY_RUN:
+                    p.unlink()
+                print(f"  [CLEAN] Removed unused {PART_NAME}/{unused} for {hal_info['mode'].upper()} mode")
 
     deploy_params_and_symlinks(tracked)
 

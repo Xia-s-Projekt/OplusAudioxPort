@@ -12,14 +12,14 @@ fi
 # Locate port_audiox.sh and prebuilt assets
 PORT_SCRIPT=""
 ASSETS_DIR=""
-for cand in "$SCRIPT_DIR/scripts/port_audiox.sh" "$SCRIPT_DIR/port_audiox.sh" "/mnt/project/RomTools/tool/tmp/oplus/mybin/port_audiox.sh"; do
+for cand in "$SCRIPT_DIR/scripts/port_audiox.sh" "$SCRIPT_DIR/port_audiox.sh" "/mnt/project/RomTools/tool/tmp/oplus/port_audiox.sh"; do
     if [[ -f "$cand" ]]; then
         PORT_SCRIPT="$cand"
         break
     fi
 done
 
-for cand in "$SCRIPT_DIR/prebuilt" "$SCRIPT_DIR" "/mnt/project/RomTools/tool/tmp/oplus/mybin"; do
+for cand in "$SCRIPT_DIR/prebuilt" "$SCRIPT_DIR" "/mnt/project/RomTools/tool/tmp/oplus/myvendor"; do
     if [[ -d "$cand/lib64/soundfx" && -d "$cand/etc/audio/audiox_param" ]]; then
         ASSETS_DIR="$cand"
         break
